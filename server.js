@@ -17,6 +17,7 @@ const PROTOCOL = decoders.PROTOCOL;
 const print = console.log;
 const app = express();
 const { exec } = require('child_process');
+const findDefaultNetworkDevice = require('./netInterfaceUtil');
 
 const skillConfig = require('./skill_names.json').skill_names;
 
@@ -704,6 +705,23 @@ async function main() {
     let num = args[0];
     let log_level = args[1];
 
+    if (num === 'auto') {
+        print('自动查找默认网卡...');
+        const device = await findDefaultNetworkDevice(devices);
+        if (device) {
+            num = devices.findIndex(d => d.description === device.description);
+            if (num === -1) {
+                print('未找到默认网卡！');
+                num = undefined;
+            } else {
+                print(`使用网卡: ${num} - ${devices[num].description}`);
+            }
+        } else {
+            print('未找到默认网卡！');
+            num = undefined;
+        }
+    }
+
     // 参数验证函数
     function isValidLogLevel(level) {
         return ['info', 'debug'].includes(level);
@@ -836,7 +854,7 @@ async function main() {
         });
     });
 
-    // 每50ms广播数据给所有WebSocket客户端
+    // 每100ms广播数据给所有WebSocket客户端
     setInterval(() => {
         if (!isPaused) {
             const userData = userDataManager.getAllUsersData();
@@ -846,7 +864,7 @@ async function main() {
             };
             io.emit('data', data);
         }
-    }, 50);
+    }, 100);
 
     const checkPort = (port) => {
         return new Promise((resolve) => {
