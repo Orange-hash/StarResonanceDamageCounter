@@ -126,6 +126,28 @@ const ProfessionType = {
     灵魂乐手: 13,
 };
 
+const EDamageSource = {
+    EDamageSourceSkill: 0,
+    EDamageSourceBullet: 1,
+    EDamageSourceBuff: 2,
+    EDamageSourceFall: 3,
+    EDamageSourceFakeBullet: 4,
+    EDamageSourceOther: 100,
+}
+
+const EDamageProperty = {
+    General: 0,
+    Fire: 1,
+    Water: 2,
+    Electricity: 3,
+    Wood: 4,
+    Wind: 5,
+    Rock: 6,
+    Light: 7,
+    Dark: 8,
+    Count: 9,
+}
+
 const getProfessionNameFromId = (professionId) => {
     switch (professionId) {
         case ProfessionType.雷影剑士:
@@ -152,6 +174,33 @@ const getProfessionNameFromId = (professionId) => {
             return '灵魂乐手';
         default:
             return '';
+    }
+};
+
+const getDamageElement = (damageProperty) => {
+    switch (damageProperty) {
+        case EDamageProperty.General:
+            return '⚔️物';
+        case EDamageProperty.Fire:
+            return '🔥火';
+        case EDamageProperty.Water:
+            return '❄️冰';
+        case EDamageProperty.Electricity:
+            return '⚡雷';
+        case EDamageProperty.Wood:
+            return '🍀森';
+        case EDamageProperty.Wind:
+            return '💨风';
+        case EDamageProperty.Rock:
+            return '⛰️岩';
+        case EDamageProperty.Light:
+            return '🌟光';
+        case EDamageProperty.Dark:
+            return '🌑暗';
+        case EDamageProperty.Count:
+            return '❓？'; // 未知
+        default:
+            return '⚔️物';
     }
 };
 
@@ -224,12 +273,15 @@ class PacketProcessor {
 
             // TODO: from testing, first bit is set when there's crit, 3rd bit for lucky, require more testing here
             const isCrit = syncDamageInfo.TypeFlag != null ? (syncDamageInfo.TypeFlag & 1) === 1 : false;
+            const isCauseLucky = syncDamageInfo.TypeFlag != null ? (syncDamageInfo.TypeFlag & 0b100) === 0b100 : false;
 
             const isMiss = syncDamageInfo.IsMiss != null ? syncDamageInfo.IsMiss : false;
             const isHeal = syncDamageInfo.Type === pb.EDamageType.Heal;
             const isDead = syncDamageInfo.IsDead != null ? syncDamageInfo.IsDead : false;
             const isLucky = !!luckyValue;
             const hpLessenValue = syncDamageInfo.HpLessenValue != null ? syncDamageInfo.HpLessenValue : Long.ZERO;
+            const damageElement = getDamageElement(syncDamageInfo.Property);
+            const damageSource = syncDamageInfo.DamageSource ?? 0;
 
             if (isTargetPlayer) {
                 //玩家目标
@@ -237,7 +289,16 @@ class PacketProcessor {
                     //玩家被治疗
                     if (isAttackerPlayer) {
                         //只记录玩家造成的治疗
-                        this.userDataManager.addHealing(attackerUuid.toNumber(), skillId, damage.toNumber(), isCrit, isLucky, targetUuid.toNumber());
+                        this.userDataManager.addHealing(
+                            attackerUuid.toNumber(),
+                            skillId,
+                            damageElement,
+                            damage.toNumber(),
+                            isCrit,
+                            isLucky,
+                            isCauseLucky,
+                            targetUuid.toNumber(),
+                        );
                     }
                 } else {
                     //玩家受到伤害
@@ -254,9 +315,11 @@ class PacketProcessor {
                         this.userDataManager.addDamage(
                             attackerUuid.toNumber(),
                             skillId,
+                            damageElement,
                             damage.toNumber(),
                             isCrit,
                             isLucky,
+                            isCauseLucky,
                             hpLessenValue.toNumber(),
                         );
                     }
@@ -266,6 +329,7 @@ class PacketProcessor {
             let extra = [];
             if (isCrit) extra.push('Crit');
             if (isLucky) extra.push('Lucky');
+            if (isCauseLucky) extra.push('CauseLucky');
             if (extra.length === 0) extra = ['Normal'];
 
             const actionType = isHeal ? 'Healing' : 'Damage';
@@ -292,7 +356,7 @@ class PacketProcessor {
             infoStr += ` Tgt: ${targetName}`;
 
             this.logger.info(
-                `${infoStr} Skill/Buff: ${skillId} ${actionType}: ${damage} ${isHeal ? '' : ` HpLessen: ${hpLessenValue}`} Extra: ${extra.join('|')}`,
+                `Type: ${damageSource} ${infoStr} Skill/Buff: ${skillId} ${actionType}: ${damage} ${isHeal ? '' : ` HpLessen: ${hpLessenValue}`} Ele: ${damageElement.slice(-1)} Ext: ${extra.join('|')}`,
             );
         }
     }

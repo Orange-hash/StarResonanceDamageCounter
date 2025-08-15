@@ -18,22 +18,13 @@ const print = console.log;
 const app = express();
 const { exec } = require('child_process');
 
+const skillConfig = require('./skill_names.json').skill_names;
+
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
 });
 const devices = cap.deviceList();
-
-const elementMap = {
-    fire: '🔥火',
-    ice: '❄️冰',
-    thunder: '⚡雷',
-    earth: '🍀森',
-    wind: '💨风',
-    light: '✨光',
-    dark: '🌙暗',
-    physics: '⚔️',
-};
 
 function ask(question) {
     return new Promise((resolve) => {
@@ -110,9 +101,10 @@ class Lock {
 
 // 通用统计类，用于处理伤害或治疗数据
 class StatisticData {
-    constructor(user, type) {
+    constructor(user, type, element) {
         this.user = user;
         this.type = type || '';
+        this.element = element || '';
         this.stats = {
             normal: 0,
             critical: 0,
@@ -255,18 +247,20 @@ class UserData {
 
     /** 添加伤害记录
      * @param {number} skillId - 技能ID/Buff ID
+     * @param {string} element - 技能元素属性
      * @param {number} damage - 伤害值
      * @param {boolean} isCrit - 是否为暴击
      * @param {boolean} [isLucky] - 是否为幸运
+     * @param {boolean} [isCauseLucky] - 是否造成幸运
      * @param {number} hpLessenValue - 生命值减少量
      */
-    addDamage(skillId, damage, isCrit, isLucky, hpLessenValue = 0) {
+    addDamage(skillId, element, damage, isCrit, isLucky, isCauseLucky, hpLessenValue = 0) {
         this.damageStats.addRecord(damage, isCrit, isLucky, hpLessenValue);
         // 记录技能使用情况
         if (!this.skillUsage.has(skillId)) {
-            this.skillUsage.set(skillId, new StatisticData(this, '伤害'));
+            this.skillUsage.set(skillId, new StatisticData(this, '伤害', element));
         }
-        this.skillUsage.get(skillId).addRecord(damage, isCrit, isLucky, hpLessenValue);
+        this.skillUsage.get(skillId).addRecord(damage, isCrit, isCauseLucky, hpLessenValue);
         this.skillUsage.get(skillId).realtimeWindow.length = 0;
 
         const subProfession = getSubProfessionBySkillId(skillId);
@@ -277,17 +271,20 @@ class UserData {
 
     /** 添加治疗记录
      * @param {number} skillId - 技能ID/Buff ID
+     * @param {string} element - 技能元素属性
      * @param {number} healing - 治疗值
      * @param {boolean} isCrit - 是否为暴击
      * @param {boolean} [isLucky] - 是否为幸运
+     * @param {boolean} [isCauseLucky] - 是否造成幸运
      */
-    addHealing(skillId, healing, isCrit, isLucky) {
+    addHealing(skillId, element, healing, isCrit, isLucky, isCauseLucky) {
         this.healingStats.addRecord(healing, isCrit, isLucky);
         // 记录技能使用情况
+        skillId = skillId + 1000000000;
         if (!this.skillUsage.has(skillId)) {
-            this.skillUsage.set(skillId, new StatisticData(this, '治疗'));
+            this.skillUsage.set(skillId, new StatisticData(this, '治疗', element));
         }
-        this.skillUsage.get(skillId).addRecord(healing, isCrit, isLucky);
+        this.skillUsage.get(skillId).addRecord(healing, isCrit, isCauseLucky);
         this.skillUsage.get(skillId).realtimeWindow.length = 0;
 
         const subProfession = getSubProfessionBySkillId(skillId);
@@ -359,10 +356,8 @@ class UserData {
             const luckyCount = stat.count.lucky;
             const critRate = stat.count.total > 0 ? critCount / stat.count.total : 0;
             const luckyRate = stat.count.total > 0 ? luckyCount / stat.count.total : 0;
-            const skillConfig = require('./skill_config.json').skills;
-            const cfg = skillConfig[skillId];
-            const name = cfg ? cfg.name : skillId;
-            const elementype = elementMap[cfg?.element] ?? '';
+            const name = skillConfig[skillId % 1000000000] ?? (skillId % 1000000000);
+            const elementype = stat.element;
 
             skills[skillId] = {
                 displayName: name,
@@ -441,6 +436,8 @@ class UserDataManager {
         this.saveThrottleDelay = 2000; // 2秒节流延迟，避免频繁磁盘写入
         this.saveThrottleTimer = null;
         this.pendingSave = false;
+
+        this.maxHpCache = new Map(); // 这个经常变化的就不存盘了
     }
 
     /** 加载用户缓存 */
@@ -517,6 +514,9 @@ class UserDataManager {
                     user.setFightPoint(cachedData.fightPoint);
                 }
             }
+            if (this.maxHpCache.has(uid)) {
+                user.setAttrKV('max_hp', this.maxHpCache.get(uid));
+            }
 
             this.users.set(uid, user);
         }
@@ -526,27 +526,31 @@ class UserDataManager {
     /** 添加伤害记录
      * @param {number} uid - 造成伤害的用户ID
      * @param {number} skillId - 技能ID/Buff ID
+     * @param {string} element - 技能元素属性
      * @param {number} damage - 伤害值
      * @param {boolean} isCrit - 是否为暴击
      * @param {boolean} [isLucky] - 是否为幸运
+     * @param {boolean} [isCauseLucky] - 是否造成幸运
      * @param {number} hpLessenValue - 生命值减少量
      */
-    addDamage(uid, skillId, damage, isCrit, isLucky, hpLessenValue = 0) {
+    addDamage(uid, skillId, element, damage, isCrit, isLucky, isCauseLucky, hpLessenValue = 0) {
         const user = this.getUser(uid);
-        user.addDamage(skillId, damage, isCrit, isLucky, hpLessenValue);
+        user.addDamage(skillId, element, damage, isCrit, isLucky, isCauseLucky, hpLessenValue);
     }
 
     /** 添加治疗记录
      * @param {number} uid - 进行治疗的用户ID
      * @param {number} skillId - 技能ID/Buff ID
+     * @param {string} element - 技能元素属性
      * @param {number} healing - 治疗值
      * @param {boolean} isCrit - 是否为暴击
      * @param {boolean} [isLucky] - 是否为幸运
+     * @param {boolean} [isCauseLucky] - 是否造成幸运
      * @param {number} targetUid - 被治疗的用户ID
      */
-    addHealing(uid, skillId, healing, isCrit, isLucky, targetUid) {
+    addHealing(uid, skillId, element, healing, isCrit, isLucky, isCauseLucky, targetUid) {
         const user = this.getUser(uid);
-        user.addHealing(skillId, healing, isCrit, isLucky);
+        user.addHealing(skillId, element, healing, isCrit, isLucky, isCauseLucky);
         const targetUser = this.getUser(targetUid);
         if (targetUser.attr.hp && typeof targetUser.attr.hp == 'number') {
             if (targetUser.attr.max_hp && targetUser.attr.max_hp - targetUser.attr.hp < healing) {
@@ -637,6 +641,10 @@ class UserDataManager {
     setAttrKV(uid, key, value) {
         const user = this.getUser(uid);
         user.attr[key] = value;
+
+        if (key === 'max_hp') {
+            this.maxHpCache.set(uid, value);
+        }
     }
 
     /** 更新所有用户的实时DPS和HPS */
@@ -685,7 +693,7 @@ let isPaused = false;
 
 async function main() {
     print('Welcome to use Damage Counter for Star Resonance!');
-    print('Version: V2.5');
+    print('Version: V2.6');
     print('GitHub: https://github.com/dmlgzs/StarResonanceDamageCounter');
     for (let i = 0; i < devices.length; i++) {
         print(i + '.\t' + devices[i].description);
